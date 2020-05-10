@@ -1,0 +1,116 @@
+---
+title: "Seguimiento de Pendientes en Agencia"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+# load data in 'global' chunk so it can be shared by all users of the dashboard
+library(datasets)
+library(flexdashboard)
+library(readr)
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(rgdal)
+library(sp)
+library(mapview)
+library(raster)
+library(shiny)
+library(benford.analysis)
+
+datos<-read.csv("Docs/basePendientes.csv",sep=";")
+datos=datos%>%mutate(PTIMPORTESOL= ifelse(PTMONEDA=="PEN",PTIMPORTE,PTIMPORTE*3.5))
+datos=datos%>%mutate(DIGBENFORD=as.numeric(substr(PTIMPORTE,1,1)))
+mapPeru=readOGR("Docs/departamentos/DEPARTAMENTOS.shp")
+datosDep=datos %>%
+      group_by(DEP_AGE) %>%
+      summarize("CtdPendiente"=n(),
+                "CtdAgencias"=n_distinct(CODSUCAGE),
+                "CtdPerdientePerAgencia"=n()/n_distinct(CODSUCAGE),
+                "TicketPendiente"=mean(PTIMPORTESOL))
+colnames(datosDep) <- c("Departamento","Cantidad Pendientes","Cantidad Agencias","Cantidad Pendientes por Agencia","Ticket promedio del monto de  Pendientes")
+mapPeru@data=datosDep
+
+```
+
+Column {data-width=400}
+-------------------------------------
+
+### Distribucion de Pendientes en Peru
+```{r}
+renderMapview({
+  mapView(mapPeru, zcol="Cantidad Pendientes por Agencia")
+ }
+)
+```
+
+
+Row {data-width=300}
+-------------------------------------
+### Variables de Busqueda {data-height=250}
+
+Un pendiente es   ,
+por ello usaremos la ley de benford para observar algun efecto anomalo.
+
+Para completar el anlisis usaremos las siguientes opciones de entraba para obervar los resgistros
+que se apliquen a ella.
+
+```{r}
+selectInput("depname", label = "Departamento:",
+            choices = datosDep$Departamento, selected ="LIMA")
+numericInput("num_benford", "Numero de Benford:", 1,
+             min = 0, max = 9)
+```
+
+### Analisis Benford
+```{r}
+bfd.cp <- benford(datos$PTIMPORTE,number.of.digits = 1,sign = "positive")
+plot(bfd.cp)
+```   
+
+
+
+
+
+Row {data-width=300}
+-------------------------------------
+### Agencias 
+```{r}
+renderValueBox({
+  numdata=datos %>% filter(DEP_AGE == input$depname) %>% 
+               filter(DIGBENFORD == input$num_benford)
+  valueagencias=length(unique(numdata$CODSUCAGE)) 
+
+  valueBox(value = valueagencias, icon = "fas fa-users",color="warning")
+})
+```
+
+
+### Monto de Importe Solarizado
+```{r}
+renderValueBox({
+  numdata=datos %>% filter(DEP_AGE == input$depname) %>% 
+               filter(DIGBENFORD == input$num_benford)
+  valueImporte=sum(numdata$PTIMPORTESOL)
+  valueBox(value = paste("S/.",format(round(as.numeric(valueImporte), 1), nsmall=1, big.mark=",")), icon = "fas fa-cubes",color="primary")
+})
+```
+
+### Reporte de Pendientes
+```{r}
+datos_dash=datos[,c("DEP_AGE","PTASIGNACION","PTMONEDA","CODSUCAGE","PTIMPORTE","DIGBENFORD")]
+renderTable({ 
+  datos_table=datos_dash %>% filter(DEP_AGE == input$depname) %>% 
+               filter(DIGBENFORD == input$num_benford)
+  datos_table=datos_table[,c("DEP_AGE","CODSUCAGE","PTASIGNACION","PTMONEDA","PTIMPORTE")]
+  datos_table=datos_table[order(datos_table$CODSUCAGE,datos_table$PTASIGNACION),]
+  colnames(datos_table) <- c("Departamento","Agencia","ID Pendiente","Moneda","Importe")
+  datos_table
+}, width = '100%')
+
+```
+
